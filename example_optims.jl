@@ -33,4 +33,4 @@ llf(startv)
 include("bfgsmin.jl")
 gr(llf,startv)
 
-res = bfgsmin(llf,startv)
+@time res = bfgsmin(llf,startv; difftype="central")
