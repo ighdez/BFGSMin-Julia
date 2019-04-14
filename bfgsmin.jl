@@ -17,14 +17,13 @@ using LinearAlgebra: inv, Matrix, I, norm
 using Calculus: hessian
 
 # Numerical gradient function
-function gr(f,param; difftype="central",ep=sqrt(eps()));
+function gr(f,param; difftype="forward",ep=sqrt(eps()));
 	K = size(param)[1];
-	
 	gr = fill(NaN,K,1);
 	ej = Matrix{Float64}(I,K,K);
 	for k = 1:K;
 		if difftype == "central"
-			gr[k,1] = (f(param + ep*ej[:,k]) - f(param - ep*ej[:,k]))./(2*ep);
+			gr[k,1] = (f(param + ep*ej[:,k]) - f(param - ep*ej[:,k]))./(2. .*ep);
 		elseif difftype == "forward"
 			gr[k,1] = (f(param + ep*ej[:,k]) - f(param))./ep;
 		else 
@@ -36,20 +35,20 @@ function gr(f,param; difftype="central",ep=sqrt(eps()));
 end
 
 # Improved numerical gradient function (with vectorized operations)
-function gr2(f,param; difftype="central",ep=sqrt(eps()));
+function gr2(f,param; difftype="forward",ep=sqrt(eps()));
 	K = size(param)[1];
-	
+	gr = fill(NaN,K)
 	plus = fill(Float64[],K,1)
 	minus = fill(Float64[],K,1)
-
 	ej = Matrix{Float64}(I,K,K)*ep;
 	
 	for i = 1:K
 		plus[i] = param .+ ej[i,:]
 		minus[i] = param .- ej[i,:]
 	end
+	
 	if difftype == "central"
-		gr = (f.(plus) .- f.(minus))./(2*ep)
+		gr = @. (f(plus) - f(minus))*0.5/ep
 	elseif difftype == "forward"
 		gr = (f.(plus) .- f(param))./ep
 	else 
@@ -72,10 +71,15 @@ function bfgsmin(f,x0; maxiter=1000,tol=1e-06,verbose=false,hess=false,difftype=
 	lambda = 1.
 	convergence = -1;
 	iter = 0
-	   
+	
+	if verbose
+		if !hess
+			println("\n","Warning: BFGSMin will return the approximate BFGS Hessian update")
+		end
+		println("\n","Optimizing: Initial F-Value: ", string(round(f_val;digits=2)))
+	end
 	# Start algorithm
 	for it = 1:maxiter;
-		println("Optimizing: Iter No: ",string(iter)," / F-Value: ", string(round(f_val;digits=2))," / | g(x)'(-H(x)^-1)g(x) |: ",string(round(g_diff;digits=6))," / Step: ",string(round(lambda;digits=5)))
 		lambda = 1;
 
 		# Construct direction vector and relative gradient
@@ -96,7 +100,7 @@ function bfgsmin(f,x0; maxiter=1000,tol=1e-06,verbose=false,hess=false,difftype=
 			if isfinite(f1) & (f1 <= ftest) & (f1>0);
 				break
 			else
-				lambda = lambda*0.2;
+				lambda = lambda./2;
 			end
 		end
 
@@ -115,24 +119,35 @@ function bfgsmin(f,x0; maxiter=1000,tol=1e-06,verbose=false,hess=false,difftype=
 		g_diff = abs(m[1]);
 		
 		# Check if relative gradient is less than tolerance
-		if g_diff <= (1+abs(f_val))*tol*tol;
-			println("Converged!")
+		if g_diff < tol;
+			if verbose
+				println("\n","Converged!")
+			end
 			convergence = 0;
 			break
 		end
 		
 		iter = iter + 1
+		
+		# Show information if verbose == true
+		if verbose
+			println("Optimizing: Iter No: ",string(iter)," / F-Value: ", string(round(f_val;digits=2))," / |g(x)'(-H(x)^-1)g(x)|: ",string(round(g_diff;digits=6))," / Step: ",string(round(lambda;digits=5)))
+		end
+
 	end
 	
 	if iter == maxiter;
 		convergence = 2;
+		println("\n","Maximum iterations reached reached. Convergence not achieved.")
 	end
 	
 	if hess
-		println("Computing approximate Hessian")
+		if verbose
+			println("\n","Computing approximate Hessian")
+		end
+		
 		h_final = hessian(llf,x);
 	else
-		println("Warning: BFGSMin will return the approximate BFGS Hessian update")
 		h_final = H0;
 	end
 	

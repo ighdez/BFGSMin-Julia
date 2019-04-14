@@ -37,8 +37,8 @@ hessian(llf,startv)
 @time gr(llf,startv; difftype="forward");
 @time gr2(llf,startv; difftype="forward");
 
-@time res = bfgsmin(llf,startv; difftype="forward",gr=gr2,hess=true)
-@time res2 = bfgsmin(llf,startv; difftype="forward",gr=gr2,hess=false)
+@time res = bfgsmin(llf,startv; difftype="forward",verbose=true,gr=gr2,hess=true);
+@time res2 = bfgsmin(llf,startv; difftype="forward",verbose=true,gr=gr2,hess=false);
 
 sqrt.(diag(inv(res["hessian"])))
 sqrt.(diag(inv(res2["hessian"])))
