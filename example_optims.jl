@@ -29,16 +29,15 @@ end
 
 include("bfgsmin.jl")
 llf(startv)
-gr(llf,startv)
-gr2(llf,startv)
+numgr(llf,startv)
 hessian(llf,startv)
+numhess(llf,startv)
 
 @time llf(startv);
-@time gr(llf,startv; difftype="forward");
-@time gr2(llf,startv; difftype="forward");
+@time numgr(llf,startv; difftype="forward");
 
-@time res = bfgsmin(llf,startv; difftype="forward",verbose=true,gr=gr2,hess=true);
-@time res2 = bfgsmin(llf,startv; difftype="forward",verbose=true,gr=gr2,hess=false);
+@time res = bfgsmin(llf,startv; difftype="forward",verbose=true,hess=true);
+@time res2 = bfgsmin(llf,startv; difftype="forward",verbose=true,hess=false);
 
 sqrt.(diag(inv(res["hessian"])))
 sqrt.(diag(inv(res2["hessian"])))
