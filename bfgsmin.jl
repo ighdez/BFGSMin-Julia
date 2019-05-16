@@ -1,9 +1,14 @@
 #################################################
 #												
-# 			   BFGSMin - Julia v0.3			
+# 			   BFGSMin - Julia v0.4			
 #												
 # Changelog:									
 #												
+# v0.4: -	For gradient-provided problems, selection
+#			of step size by a line search algorithm based
+#			in Fletcher (2000) section 2.6 and ported from 
+#			Angel Luis Lopez code. More information available
+#			in http://www.angelluislopez.net
 #														
 # v0.3: - 	Inclusion of improved hessian that
 # 			uses broadcast capabilities of Julia,
@@ -25,6 +30,32 @@
 # v0.1: Initial version, at least operational.			
 #												
 #################################################
+
+#######################################################################################################################
+#
+# Usage of BFGSMin:
+#
+# bfgsmin(f,x0,g=nothing; maxiter=1000,tol=1e-06,verbose=false,hess=false,difftype="central", diffeps=sqrt(eps()))
+#
+# Where:
+#
+# - f:		Objective function to be minimized.
+# - x0:		Starting values.
+# - g:		Gradient function. If it is not provided, BFGS will use a finite-difference approximation.
+#
+# Optional arguments:
+# - maxiter:	Maximum number of iterations.
+# - tol:		Relative gradient tolerance. BFGSMin will stop if |g(x)'(-H(x)^-1)g(x)| < tol.
+# - verbose:	Print informative messages during optimization.
+# - hess:		Should BFGSMin provide the approximate Hessian at optimum? 
+#				If false, BFGSMin will return the BFGS approximation instead
+#				of approximate Hessian.
+# - difftype:	Difference type used in finite-difference gradient, BFGSMin can use a "forward"
+#				difference (default) or a "central" difference.
+# - diffeps:	Value for finite-difference step parameter. By default is sqrt(eps), where 'eps'
+#				is the machine floating number precision.
+#
+#######################################################################################################################
 
 using LinearAlgebra: inv, Matrix, I, norm, diagind
 using Calculus: hessian
@@ -93,7 +124,207 @@ function numhess(f,param; ep=1e-05)
 	return(hs)
 end
 
-# BFGS function
+# Function for step size computation
+function stepp(fx,dfx,x,ds;sigma=0.9,guess=0.1)
+
+function stepper(fx,dfx,x,ds,alpha);
+	xx = x' + alpha*ds; 
+	fcc = fx(xx)
+	dfcc = ds'*dfx(xx)
+	return (fcc,dfcc)
+end
+
+# Scalars
+ro = 0.01;
+t1 = 9;
+t2 = 0.1;
+t3 = 0.5;
+
+flag = 0;
+maxit = 100;
+
+alpha = fill(NaN,maxit)
+alpha[1] = 0
+
+alpha[2] = guess;
+
+f0,df0 = stepper(fx,dfx,x,ds,alpha[1])
+
+ff = fill(NaN,maxit);
+dff = fill(NaN,maxit);
+
+ff[1] = f0; dff[1] = df0;
+finf = 0;
+u = (finf-f0)/(ro*df0);
+
+# Bracketing
+j = NaN
+a = fill(NaN,maxit);
+b = fill(NaN,maxit);
+dfm = fill(NaN,maxit);
+for i = 2:maxit
+
+	j = copy(i)
+	# f[i],df[i] = stepper(rf,rdf,x0,s0,alpha[i]);
+	f1,df1 = stepper(fx,dfx,x,ds,alpha[i]);
+
+	ff[j] = copy(f1); dff[j] = copy(df1);
+	
+	if ff[i] <= finf
+		flag = 1
+		break
+	end
+
+	if (ff[i] > f0 + alpha[i]*ro*df0) | (ff[i] >= f0)
+		a[i] = alpha[i-1]; b[i] = alpha[i];
+		break
+	end
+	
+	if abs(dff[i]) <= -sigma*df0
+		flag = 1
+		break
+	elseif dff[i] >= 0
+		a[i] = alpha[i]; b[i] = alpha[i-1]
+		break
+	end
+	
+	if u <= 2*alpha[i] - alpha[i-1]
+		alpha[i+1] = u;
+	
+	else
+	
+		# Interval
+		
+		intval = [2*alpha[i]-alpha[i-1], min(u,alpha[i]+t1*(alpha[i]-alpha[i-1]))];
+		
+		# Mapping on to [0,1]
+		map = [alpha[i-1] alpha[i]]
+		dfm[i-1] = (map[2]-map[1])*dff[i-1]
+		dfm[i] = (map[2]-map[1])*dff[i]
+		
+		# Parameters of the Hermite interpolating cubic
+		c1 = ff[i-1];
+		c2 = dfm[i-1];
+		c3 = 3*(ff[i]-ff[i-1]) - 2*dfm[i-1] - dfm[i];
+		c4 = dfm[i-1] + dfm[i] - 2*(ff[i]-ff[i-1]);
+		
+		# Interval: alpha = a + z(b-a); alpha is in intval
+		zmin = (intval[1]-map[1])/(map[2]-map[1]);
+		zmax = (intval[2]-map[1])/(map[2]-map[1]);
+		
+		# min c(z) = c1+c2z+c3z^2+c4z^3,
+		# where z belongs to [zmin,zmax]
+		mincubic = (-c3+sqrt(abs(c3^2-3*c4*dfm[i-1])))/(3*c4);
+		
+		if mincubic<zmin
+			mincubic=zmin
+		elseif mincubic>zmax
+			mincubic=zmax
+		end
+		
+		z=[zmin;zmax;mincubic];
+		
+		c = c1.+c2.*z.+c3.*z.^2 .+c4.*z.^3;
+		
+		cmin,indc = findmin(c);
+		z = z[indc]
+		
+		# New value for alpha
+		alpha[i+1] = map[1] .+ z.*(map[2]-map[1])
+	end
+end
+
+if flag > 0
+	alpha = alpha[j]
+	return(alpha)
+
+	# Sectioning
+
+else
+	
+	fa = fill(NaN,maxit)
+	fb = fill(NaN,maxit)
+	dfa = fill(NaN,maxit)
+	dfb = fill(NaN,maxit)
+	dfam = fill(NaN,maxit)
+	dfbm = fill(NaN,maxit)
+	
+	for k = j:maxit
+		# global alpha
+		fa[k],dfa[k] = stepper(fx,dfx,x,ds,a[k])
+		fb[k],dfb[k] = stepper(fx,dfx,x,ds,b[k])
+		
+		intval = [a[k]+t2*(b[k]-a[k]),b[k]-t3*(b[k]-a[k])];
+		
+		# Map to [0,1]
+		map = [a[k] b[k]];
+		
+		dfam[k] = (map[2]-map[1])*dfa[k]
+		dfbm[k] = (map[2]-map[1])*dfb[k]
+		
+		# Parameters of the Hermite interpolating cubic
+		
+        c1 = fa[k];
+        c2 = dfam[k];
+        c3 = 3*(fb[k]-fa[k]) - 2*dfam[k] - dfbm[k];
+        c4 = dfam[k] + dfbm[k] - 2*(fb[k]-fa[k]);
+		
+		# interval: alpha = a + z(b-a); alpha is in intval
+		zmin = (intval[1]-map[1])/(map[2]-map[1]);
+		zmax = (intval[2]-map[1])/(map[2]-map[1]);
+		
+		# min c(z) = c1+c2z+c3z^2+c4z^3,
+		# where z belongs to [zmin,zmax]
+		
+		mincubic = (-c3+sqrt(c3^2-3*c4*dfam[k]))/(3*c4);
+		
+		if mincubic<zmin
+			mincubic = zmin
+		elseif mincubic>zmax
+			mincubic = zmax
+		end
+		
+		z=[zmin;zmax;mincubic];
+		
+		c = c1.+c2.*z.+c3.*z.^2 .+c4.*z.^3;
+		
+		cmin,indc = findmin(c);
+		z = z[indc]
+		
+		# New value for alpha
+		alpha[k] = map[1] + z*(map[2]-map[1]);
+
+		ff[k],dff[k] = stepper(fx,dfx,x,ds,alpha[k]);
+		
+		if (ff[k] > f0+ro*alpha[k]*df0) | (ff[k] >= fa[k])
+			a[k+1] = a[k]
+			b[k+1] = alpha[k]
+		else
+			if abs(dff[k]) <= -sigma*df0
+				alpha=alpha[k]
+				return(alpha)
+			end
+			
+			a[k+1] = alpha[k]
+			
+			if (b[k]-a[k])*dff[k] >= 0
+				b[k+1] = a[k]
+			else
+				b[k+1] = b[k]
+			end
+			
+			if (a[k]-alpha[k])*dfa[k] <= sqrt(1e-30)
+				println("Potential Round-off error, no progress is posible in the line search")
+				return(alpha)
+			end
+		end
+	end
+end
+
+return(alpha)
+end
+
+# BFGSMin function
 function bfgsmin(f,x0,g=nothing; maxiter=1000,tol=1e-06,verbose=false,hess=false,difftype="central", diffeps=sqrt(eps()));
 	
 	# Initialize
@@ -109,7 +340,7 @@ function bfgsmin(f,x0,g=nothing; maxiter=1000,tol=1e-06,verbose=false,hess=false
 	H0 = Matrix{Float64}(I,size(x)[1],size(x)[1]);
 	g_diff = Inf;
 	c1 = 1e-04;
-	lambda = 1.
+	lambda = 1
 	convergence = -1;
 	iter = 0
 	
@@ -132,22 +363,26 @@ function bfgsmin(f,x0,g=nothing; maxiter=1000,tol=1e-06,verbose=false,hess=false
 		d = inv(-H0)*g0;
 		m = d'*g0;
 		# Select step to satisfy the Armijo-Goldstein condition
-		while true;
-			x1 = x + lambda*d[:,1];
-			
-			f1 = try 
-					f(x1)
-				catch
-					NaN
-				end
-			
-			ftest = f_val + c1*lambda*m[1];
+		if isnothing(g)
+			while true;
+				x1 = x + lambda*d[:,1];
+				
+				f1 = try 
+						f(x1)
+					catch
+						NaN
+					end
+				
+				ftest = f_val + c1*lambda*m[1];
 
-			if isfinite(f1) & (f1 <= ftest) & (f1>0);
-				break
-			else
-				lambda = lambda./2;
+				if isfinite(f1) & (f1 <= ftest) & (f1>0);
+					break
+				else
+					lambda = lambda./2;
+				end
 			end
+		else
+			lambda = stepp(f,g,x',d);
 		end
 
 		# Construct the improvement and gradient improvement
