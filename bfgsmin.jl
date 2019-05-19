@@ -59,7 +59,7 @@
 
 using LinearAlgebra: inv, Matrix, I, norm, diagind
 using Calculus: hessian
-# test
+
 # Improved numerical gradient function (with broadcast operations)
 function numgr(f,param; difftype="forward",ep=sqrt(eps()));
 	K = size(param)[1];
