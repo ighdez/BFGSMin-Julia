@@ -170,10 +170,10 @@ for i = 2:maxit
 
 	ff[j] = copy(f1); dff[j] = copy(df1);
 	
-	if ff[i] <= finf
-		flag = 1
-		break
-	end
+	# if abs(ff[i]) <= finf
+		# flag = 1
+		# break
+	# end
 
 	if (ff[i] > f0 + alpha[i]*ro*df0) | (ff[i] >= f0)
 		a[i] = alpha[i-1]; b[i] = alpha[i];
